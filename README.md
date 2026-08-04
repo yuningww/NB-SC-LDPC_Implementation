@@ -16,16 +16,9 @@ clang++ -std=c++14 -O2 -IInclude LDPC/*.cpp -o build/ldpc
   used by every other mode.
 - **Nucleotide mapping**: `0,1,2,3` ↔ `A,C,G,T`. As written in the `testbed.cpp`.
 - **Channel matrix file**: text file with convention,
-$
-\scriptsize
-Q = 
-\begin{bmatrix}
-    P(y=A\mid x=A) & P(y=A\mid x=C) & P(y=A\mid x=G) & P(y=A\mid x=T)\\
-    P(y=C\mid x=A) & P(y=C\mid x=C) & P(y=C\mid x=G) & P(y=C\mid x=T)\\
-    P(y=G\mid x=A) & P(y=G\mid x=C) & P(y=G\mid x=G) & P(y=G\mid x=T)\\
-    P(y=T\mid x=A) & P(y=T\mid x=C) & P(y=T\mid x=G) & P(y=T\mid x=T)\\
-\end{bmatrix}^T
-$
+
+https://latex.codecogs.com/png.image?\dpi{200} \scriptsize Q = \begin{bmatrix} P(y=A\mid x=A) & P(y=A\mid x=C) & P(y=A\mid x=G) & P(y=A\mid x=T)\\ P(y=C\mid x=A) & P(y=C\mid x=C) & P(y=C\mid x=G) & P(y=C\mid x=T)\\ P(y=G\mid x=A) & P(y=G\mid x=C) & P(y=G\mid x=G) & P(y=G\mid x=T)\\ P(y=T\mid x=A) & P(y=T\mid x=C) & P(y=T\mid x=G) & P(y=T\mid x=T)\\ \end{bmatrix}^T
+
 - `Dimension` = number of message symbols as input; `Length` = codeword length after encoding.
 - Substitution errors only, no insertions/deletions.
 
