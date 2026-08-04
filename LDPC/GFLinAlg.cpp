@@ -1,4 +1,5 @@
 #include "GFLinAlg.h"
+#include <cstring>
 
 //construct a nullspace basis for a given matrix. 
 GFSymbol* Nullspace(GFSymbol*pMatrix  ///the matrix to be considered
@@ -46,7 +47,7 @@ void Gauss(GFSymbol* pMatrix
 		//identify the leading column
 		unsigned c = i;
 		bool Success = false;
-		for (c; c < NumOfColumns; c++)
+		for (; c < NumOfColumns; c++)
 		{
 			unsigned C = pPermutation[c];
 			for (unsigned j = i; j < NumOfRows; j++)

@@ -1,10 +1,18 @@
 #include "NBLdpcDecoder.h"
 #include <algorithm>
 #include <functional>
+#include <stdexcept>
 
 NBLdpcDecoder::NBLdpcDecoder(std::string specFile, unsigned NumOfRemainingLLRs)
 	: NBLdpcCodec(specFile), m_NumOfComponents(NumOfRemainingLLRs)
 {
+	// Decode() indexes the per-edge LLR arrays up to m_GF.FieldSize_1; the
+	// "reduced complexity" truncation implied by this parameter was never
+	// implemented, so anything smaller silently overruns those arrays.
+	if (NumOfRemainingLLRs < m_GF.FieldSize_1 + 1)
+		throw std::runtime_error("NumOfRemainingVals must be >= field size (" +
+			std::to_string(m_GF.FieldSize_1 + 1) + ")");
+
 	m_ppVar2Checks = new tIndPair*[m_Length];
 	m_pCheckDegrees = new unsigned[m_NumOfChecks];
 	m_pVarDegrees = new unsigned[m_Length];
@@ -14,6 +22,13 @@ NBLdpcDecoder::NBLdpcDecoder(std::string specFile, unsigned NumOfRemainingLLRs)
 		std::fill(m_pCheckDegrees, m_pCheckDegrees + m_NumOfChecks, pParams->m_NumOfRowElements);
 		std::fill(m_pVarDegrees, m_pVarDegrees + m_Length, pParams->m_NumOfColumnElements);
 
+	}
+	else if (m_Type == L_SC)
+	{
+		sc_params *pParams = reinterpret_cast<sc_params*>(m_pAdditionalParams);
+		for (unsigned i = 0; i < m_NumOfChecks; ++i)
+			m_pCheckDegrees[i] = ComputeSCCheckDegree(*pParams, i);
+		std::fill(m_pVarDegrees, m_pVarDegrees + m_Length, pParams->m_CouplingWidth);
 	}
 	m_ppVar2Checks = new tIndPair*[m_Length];
 	for (unsigned i = 0; i < m_Length; ++i)
@@ -75,8 +90,7 @@ inline double JacobiLog(double x)
 		return 0.375 - x / 8.;
 	if (x < 3.2)
 		return 0.2375 - x / 16.;
-	if (x < 4.4)
-		return 0.1375 - x / 32.;
+	return 0.1375 - x / 32.;
 	//return (x > 5.5) ? 0 : .131478060787483 + (3.43245248951091 - 1.74351875423031*x) / (6.11620503468962 + (2.21612896897222 + x)*x);
 }
 
@@ -125,16 +139,10 @@ void PermuteVec(tLLRPair* pIn, tLLRPair *pOut, GaloisField& gf, const GFSymbol& 
 		pOut[gf.multiplyConst(i, sym)] = pIn[i];
 }
 
-bool NBLdpcDecoder::Decode(float* pNoisyData, GFSymbol* pCodeword, unsigned NumOfIterations, float m_NoiseVariance)
+bool NBLdpcDecoder::Decode(GFSymbol* pReceivedSymbols, const DnaChannel& channel, GFSymbol* pCodeword, unsigned NumOfIterations)
 {
 	for (unsigned i = 0; i < m_Length; ++i)
-	{
-		for (unsigned j = 0; j <= m_GF.FieldSize_1; ++j)
-			m_ppInputLLRs[i][j] = (m_pConstellation[0] - m_pConstellation[j])*(m_pConstellation[j] + m_pConstellation[0] - 2 * pNoisyData[i]) / (2 * m_NoiseVariance);//std::make_pair((m_pConstellation[0] - m_pConstellation[j])*(m_pConstellation[i] + m_pConstellation[0] - 2 * pNoisyData[i]) / (2 * m_NoiseVariance), j);
-		//std::sort(m_ppInputLLRs[i], m_ppInputLLRs[i] + m_GF.FieldSize_1 + 1, std::greater<tLLRPair>());
-		/*for (unsigned j = 0; j < m_pVarDegrees[i]; ++j)
-			memcpy(m_ppVarInputs[i][j], m_ppInputLLRs[i], sizeof(tLLRPair) * m_NumOfComponents);		*/
-	}
+		channel.ComputeLLRs(pReceivedSymbols[i], m_ppInputLLRs[i], m_GF.FieldSize_1);
 	for (unsigned i = 0; i < m_NumOfChecks; ++i)
 		for (unsigned j = 0; j < m_pCheckDegrees[i]; ++j)
 			memset(m_ppCheckOutputs[i][j], 0, sizeof(tLLRPair) * m_NumOfComponents);

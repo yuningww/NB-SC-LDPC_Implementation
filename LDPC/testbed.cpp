@@ -1,54 +1,101 @@
 #include <iostream>
 #include "NBLdpcDecoder.h"
 #include "NBLdpcBuilder.h"
+#include "DnaChannel.h"
 #include <algorithm>
+#include <cctype>
 #include <random>
 #include <ctime>
-#include <complex.h>
+#include <stdexcept>
+#include <vector>
 
 using namespace std;
+
+int g_argc;
+char **g_argv;
 
 char *NextArgument()
 {
 	static int curArg = 1;
-	return __argv[curArg++];
+	return g_argv[curArg++];
 }
 
 void Usage()
 {
 	cout << "Usage:\n"
-		<< "B Length Redundancy Extension [R RowVals ColVals] specFileName\n"
+		<< "B VNsPerPos CNsPerPos CouplingWidth CheckDegreePerOffset ChainLength Extension specFileName\n"
 		<< "T specFileName NumOfIterations\n"
-		<< "D specFileName NumOfDecoderIterations NumOfRemainingVals SNR NumOfErrors NumOfIterations\n";
+		<< "D specFileName NumOfDecoderIterations NumOfRemainingVals ConfusionMatrixFile NumOfErrors NumOfIterations\n"
+		<< "H specFileName\n"
+		<< "E specFileName Message\n"
+		<< "C specFileName ConfusionMatrixFile Message NumOfDecoderIterations\n";
 }
 
-inline float CalculateSigma(float SNR, unsigned Length, unsigned BinDimension) {
-	return sqrtf(1.f / (2.f * powf(10.f, (SNR / 10.f)) * ((float)BinDimension / Length)));
-}
+// Nucleotide I/O (GF(4) only): symbol values 0,1,2,3 <-> A,C,G,T, matching
+// the row/column order expected of confusion-matrix files (see DnaChannel.h).
+const char kNucleotides[4] = { 'A', 'C', 'G', 'T' };
 
-int main()
+GFSymbol NucleotideToSymbol(char c)
 {
-	if(__argc != 9 && __argc != 4 && __argc != 8)
+	switch (toupper(static_cast<unsigned char>(c)))
+	{
+		case 'A': return 0;
+		case 'C': return 1;
+		case 'G': return 2;
+		case 'T': return 3;
+	}
+	throw runtime_error(string("Invalid nucleotide character '") + c + "' (expected A/C/G/T)");
+}
+
+vector<GFSymbol> StringToSymbols(const string& s)
+{
+	vector<GFSymbol> out(s.size());
+	for (size_t i = 0; i < s.size(); ++i)
+		out[i] = NucleotideToSymbol(s[i]);
+	return out;
+}
+
+string SymbolsToString(const GFSymbol* pSymbols, unsigned n)
+{
+	string s(n, 'A');
+	for (unsigned i = 0; i < n; ++i)
+		s[i] = kNucleotides[pSymbols[i]];
+	return s;
+}
+
+void RequireGF4(unsigned maxFieldElement)
+{
+	if (maxFieldElement + 1 != 4)
+		throw runtime_error("Nucleotide string I/O requires a GF(4) code; this spec is GF(" +
+			to_string(maxFieldElement + 1) + ")");
+}
+
+int main(int argc, char **argv)
+{
+	g_argc = argc;
+	g_argv = argv;
+	static const int validArgcs[] = { 3, 4, 6, 8, 9 };
+	if (find(begin(validArgcs), end(validArgcs), g_argc) == end(validArgcs))
 	{
 		Usage();
 		return 0;
 	}
+	try
+	{
 	char mode = NextArgument()[0];
 	unsigned Length, Extension;
 	string specFileName;
 	if(mode == 'B')
 	{
-		Length = stoi(NextArgument());
-		unsigned Redundancy = stoi(NextArgument());
+		unsigned VNsPerPos = stoi(NextArgument());
+		unsigned CNsPerPos = stoi(NextArgument());
+		unsigned CouplingWidth = stoi(NextArgument());
+		unsigned CheckDegreePerOffset = stoi(NextArgument());
+		unsigned ChainLength = stoi(NextArgument());
 		Extension = stoi(NextArgument());
-		char type = NextArgument()[0];
-		if(type == 'R')
-		{
-			unsigned RowVals = stoi(NextArgument()),
-				ColVals = stoi(NextArgument());
-			specFileName = NextArgument();
-			NBLdpcBuilder::BuildRegular(Length, Redundancy, Extension, RowVals, ColVals, specFileName);
-		}
+		specFileName = NextArgument();
+		NBLdpcBuilder::BuildSpatiallyCoupled(VNsPerPos, CNsPerPos, CouplingWidth,
+			CheckDegreePerOffset, ChainLength, Extension, specFileName);
 	}
 	else if(mode == 'T')
 	{
@@ -85,72 +132,123 @@ int main()
 		specFileName = NextArgument();
 		unsigned NumOfDecoderIterations = stoi(NextArgument());
 		unsigned NumOfRemainingVals = stoi(NextArgument());
-		float SNR = stof(NextArgument());
+		string confMatrixFile = NextArgument();
 		unsigned NumOfErrors = stoi(NextArgument());
 		unsigned NumOfIterations = stoi(NextArgument());
 
 		NBLdpcDecoder codec(specFileName, NumOfRemainingVals);
 		Length = codec.GetLength();
-		Extension = codec.GetFieldOrder();
 		unsigned Dimension = codec.GetDimension();
-		float Sigma = CalculateSigma(SNR, Length, Dimension * Extension);
+		DnaChannel channel(confMatrixFile, codec.GetMaxFieldElement() + 1);
 		mt19937 engine(0/*time(nullptr)*/);
-		normal_distribution<float> noiseGen(0, Sigma);
 		uniform_int_distribution<int> dataGen(0, codec.GetMaxFieldElement());
 		GFSymbol *pData = new GFSymbol[Dimension];
 		GFSymbol *pEncoded = new GFSymbol[Length];
 		GFSymbol *pDecoded = new GFSymbol[Length];
-		float *pNoisyData = new float[Length];
+		GFSymbol *pReceived = new GFSymbol[Length];
 		unsigned currentErrors = 0;
 		unsigned it = 0;
-		unsigned bitErrors = 0;
-		unsigned curBitErrors;
-		unsigned mlErrors = 0;
+		unsigned symbolErrors = 0;
+		unsigned curSymbolErrors;
 		unsigned failures = 0;
-		for (it; it < NumOfIterations && currentErrors < NumOfErrors; ++it)
+		for (; it < NumOfIterations && currentErrors < NumOfErrors; ++it)
 		{
 			for (unsigned i = 0; i < Dimension; i++)
 				pData[i] = dataGen(engine);
 			codec.Encode(pData, pEncoded);
 			for (unsigned i = 0; i < Length; i++)
-				pNoisyData[i] = codec.Modulate(pEncoded[i]) + noiseGen(engine);
-			bool flag = codec.Decode(pNoisyData, pDecoded, NumOfDecoderIterations, Sigma * Sigma);
-			//modulate the codeword, and compare the euclidean distance
-			float MLCorr = 0., CurCorr = 0.;
-			for (unsigned i = 0; i < Length; i++)
-			{
-				MLCorr -= pow(codec.Modulate(pEncoded[i]) - pNoisyData[i], 2.);
-				CurCorr -= pow(codec.Modulate(pDecoded[i]) - pNoisyData[i], 2.);
-			}
+				pReceived[i] = channel.Simulate(pEncoded[i], engine);
+			bool flag = codec.Decode(pReceived, channel, pDecoded, NumOfDecoderIterations);
 			if (!flag)
 			{
 				failures++;
-				curBitErrors = Length / 2;
+				curSymbolErrors = Length / 2;
 			}
 			else
 			{
-				curBitErrors = 0;
+				curSymbolErrors = 0;
 				for (unsigned i = 0; i < Length; i++)
 					if (pDecoded[i] != pEncoded[i])
-						curBitErrors++;
-				if (CurCorr > MLCorr)
-					mlErrors++;
+						curSymbolErrors++;
 			}
-			if (curBitErrors)//(memcmp(pDecoded, pEncoded, sizeof(GFSymbol) * Length) != 0)
+			if (curSymbolErrors)
 				currentErrors++;
 
-			bitErrors += curBitErrors;
+			symbolErrors += curSymbolErrors;
 			if (it > 0 && it % 1000 == 0)
 				cout << it << ' ' << (static_cast<float>(currentErrors) / it) <<  endl;
 		}
-		cerr << it << ' ' << (static_cast<float>(currentErrors) / it) 
-			<< ' ' << (static_cast<float>(bitErrors) / (Length * it)) 
-			<< ' ' << (static_cast<float>(mlErrors) / it) <<  endl;
-		system("pause");
+		cerr << it << ' ' << (static_cast<float>(currentErrors) / it)
+			<< ' ' << (static_cast<float>(symbolErrors) / (Length * it))
+			<< ' ' << (static_cast<float>(failures) / it) <<  endl;
 		delete[] pData;
 		delete[] pEncoded;
 		delete[] pDecoded;
-		delete[] pNoisyData;
+		delete[] pReceived;
+	}
+	else if (mode == 'H')
+	{
+		specFileName = NextArgument();
+		NBLdpcCodec codec(specFileName);
+		codec.PrintCheckMatrix(cout);
+	}
+	else if (mode == 'E')
+	{
+		specFileName = NextArgument();
+		string message = NextArgument();
+		NBLdpcCodec codec(specFileName);
+		RequireGF4(codec.GetMaxFieldElement());
+		if (message.size() != codec.GetDimension())
+			throw runtime_error("message length " + to_string(message.size()) +
+				" does not match code dimension " + to_string(codec.GetDimension()));
+
+		vector<GFSymbol> msgSyms = StringToSymbols(message);
+		vector<GFSymbol> codeword(codec.GetLength());
+		codec.Encode(msgSyms.data(), codeword.data());
+		cout << "Codeword: " << SymbolsToString(codeword.data(), codec.GetLength()) << endl;
+	}
+	else if (mode == 'C')
+	{
+		specFileName = NextArgument();
+		string confMatrixFile = NextArgument();
+		string message = NextArgument();
+		unsigned NumOfDecoderIterations = stoi(NextArgument());
+
+		NBLdpcDecoder codec(specFileName, 4);
+		RequireGF4(codec.GetMaxFieldElement());
+		if (message.size() != codec.GetDimension())
+			throw runtime_error("message length " + to_string(message.size()) +
+				" does not match code dimension " + to_string(codec.GetDimension()));
+
+		vector<GFSymbol> msgSyms = StringToSymbols(message);
+		vector<GFSymbol> cleanCodeword(codec.GetLength());
+		codec.Encode(msgSyms.data(), cleanCodeword.data());
+		cout << "Message:        " << message << endl;
+		cout << "Clean codeword: " << SymbolsToString(cleanCodeword.data(), codec.GetLength()) << endl;
+
+		DnaChannel channel(confMatrixFile, codec.GetMaxFieldElement() + 1);
+		mt19937 engine(0);
+		vector<GFSymbol> received(codec.GetLength());
+		for (unsigned i = 0; i < codec.GetLength(); ++i)
+			received[i] = channel.Simulate(cleanCodeword[i], engine);
+		cout << "Received noisy: " << SymbolsToString(received.data(), codec.GetLength()) << endl;
+
+		vector<GFSymbol> decoded(codec.GetLength());
+		bool success = codec.Decode(received.data(), channel, decoded.data(), NumOfDecoderIterations);
+		cout << "Decoded:        " << SymbolsToString(decoded.data(), codec.GetLength()) << endl;
+		cout << "Decode " << (success ? "converged (all parity checks satisfied)" : "FAILED to converge") << endl;
+
+		vector<GFSymbol> recoveredMsg(codec.GetDimension());
+		codec.ExtractMessage(decoded.data(), recoveredMsg.data());
+		string recovered = SymbolsToString(recoveredMsg.data(), codec.GetDimension());
+		cout << "Recovered msg:  " << recovered
+			<< (recovered == message ? "  (matches original)" : "  (MISMATCH)") << endl;
+	}
+	}
+	catch (const exception& e)
+	{
+		cerr << "Error: " << e.what() << endl;
+		return 1;
 	}
 	return 0;
 }

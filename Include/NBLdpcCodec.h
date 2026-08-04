@@ -1,7 +1,10 @@
 #pragma once
 
 #include "GFLinAlg.h"
+#include <algorithm>
 #include <fstream>
+#include <ostream>
+#include <vector>
 
 struct regular_params
 {
@@ -9,10 +12,32 @@ struct regular_params
 	unsigned m_NumOfColumnElements;
 };
 
+struct sc_params
+{
+	unsigned m_VNsPerPos;
+	unsigned m_CNsPerPos;
+	unsigned m_CouplingWidth;
+	unsigned m_CheckDegreePerOffset;
+	unsigned m_ChainLength;
+};
+
+// Degree of check row `rowIndex` in a terminated SC chain: all CNsPerPos
+// rows at a given chain position share the same degree, which tapers near
+// the two ends where fewer of the CouplingWidth offsets have a contributing
+// VN position (see NBLdpcBuilder::BuildSpatiallyCoupled/ConnectLayer).
+inline unsigned ComputeSCCheckDegree(const sc_params& params, unsigned rowIndex)
+{
+	unsigned pos = rowIndex / params.m_CNsPerPos;
+	int oLo = std::max(0, (int)pos - (int)params.m_ChainLength + 1);
+	int oHi = std::min((int)params.m_CouplingWidth - 1, (int)pos);
+	unsigned count = (oHi >= oLo) ? (unsigned)(oHi - oLo + 1) : 0;
+	return params.m_CheckDegreePerOffset * count;
+}
+
 class NBLdpcCodec
 {
 protected:
-	enum ldpc_type_t {L_REGULAR, L_OTHER};
+	enum ldpc_type_t {L_REGULAR, L_SC, L_OTHER};
 	
 	GaloisField m_GF;
 	//Code params
@@ -22,20 +47,9 @@ protected:
 	unsigned m_NumOfChecks;
 	GFSymbol *m_pGenMatrix;
 	GFPair **m_ppCheckConstraints;
+	unsigned *m_pMessagePositions; // codeword index holding message symbol i, for i in [0, m_Dimension)
 
 	void *m_pAdditionalParams;
-
-	//For modulation
-	float *m_pConstellation;
-	float m_ScaleFactor;
-
-	void InitModem()
-	{
-		m_ScaleFactor = sqrtf(3.f / ((1u << (2 * m_GF.Extension)) - 1));
-		m_pConstellation = new float[m_GF.FieldSize_1 + 1];
-		for (unsigned i = 0; i <= m_GF.FieldSize_1; ++i)
-			m_pConstellation[i] = (2.f * i - m_GF.FieldSize_1) * m_ScaleFactor;
-	}
 
 public:
 	NBLdpcCodec(unsigned Length, unsigned NumOfChecks, unsigned Extension, GFSymbol* pCheckMatrix);
@@ -54,12 +68,26 @@ public:
 		}
 	}
 
-	float Modulate(const GFSymbol& Symbol) const
+	bool VerifyCodeword(GFSymbol* pCodeword);
+
+	void ExtractMessage(const GFSymbol* pCodeword, GFSymbol* pMessage) const
 	{
-		return m_pConstellation[Symbol];
+		for (unsigned i = 0; i < m_Dimension; ++i)
+			pMessage[i] = pCodeword[m_pMessagePositions[i]];
 	}
 
-	bool VerifyCodeword(GFSymbol* pCodeword);
+	void PrintCheckMatrix(std::ostream& os) const
+	{
+		std::vector<GFSymbol> row(m_Length);
+		for (unsigned i = 0; i < m_NumOfChecks; ++i)
+		{
+			std::fill(row.begin(), row.end(), 0);
+			for (GFPair* p = m_ppCheckConstraints[i]; p->second; ++p)
+				row[p->first] = p->second;
+			for (unsigned j = 0; j < m_Length; ++j)
+				os << (unsigned)row[j] << (j + 1 < m_Length ? ' ' : '\n');
+		}
+	}
 
 	virtual ~NBLdpcCodec()
 	{
@@ -67,8 +95,18 @@ public:
 		for (unsigned i = 0; i < m_NumOfChecks; ++i)
 			delete[] m_ppCheckConstraints[i];
 		delete[] m_ppCheckConstraints;
-		delete[] m_pConstellation;
-		delete[] m_pAdditionalParams;
+		delete[] m_pMessagePositions;
+		switch (m_Type)
+		{
+		case L_REGULAR:
+			delete static_cast<regular_params*>(m_pAdditionalParams);
+			break;
+		case L_SC:
+			delete static_cast<sc_params*>(m_pAdditionalParams);
+			break;
+		default:
+			break;
+		}
 	}
 
 	unsigned GetDimension() const

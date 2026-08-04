@@ -1,5 +1,6 @@
 #pragma once
 #include "NBLdpcCodec.h"
+#include "DnaChannel.h"
 
 typedef /*std::pair<float, GFSymbol>*/double tLLRPair;
 typedef std::pair<unsigned, unsigned> tIndPair;
@@ -21,7 +22,7 @@ class NBLdpcDecoder : public NBLdpcCodec
 	tLLRPair **m_ppInputLLRs;
 public:
 	NBLdpcDecoder(std::string specFile, unsigned NumOfRemainingLLRs);
-	bool Decode(float* pNoisyData, GFSymbol* pCodeword, unsigned NumOfIterations, float m_NoiseVariance);
+	bool Decode(GFSymbol* pReceivedSymbols, const DnaChannel& channel, GFSymbol* pCodeword, unsigned NumOfIterations);
 
 	virtual ~NBLdpcDecoder();
 };

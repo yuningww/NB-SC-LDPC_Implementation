@@ -1,5 +1,19 @@
 #include "NBLdpcCodec.h"
 #include <iostream>
+#include <cassert>
+#include <numeric>
+
+namespace
+{
+	unsigned* ComputeMessagePositions(unsigned* pPerm, unsigned Length, unsigned Dimension)
+	{
+		unsigned actualRank = Length - Dimension;
+		unsigned* pMessagePositions = new unsigned[Dimension];
+		for (unsigned i = 0; i < Dimension; ++i)
+			pMessagePositions[i] = pPerm[actualRank + i];
+		return pMessagePositions;
+	}
+}
 
 NBLdpcCodec::NBLdpcCodec(unsigned Length, unsigned NumOfChecks, unsigned Extension, GFSymbol* pCheckMatrix): 
 	m_Length(Length), m_NumOfChecks(NumOfChecks), m_Type(L_OTHER)
@@ -22,8 +36,11 @@ NBLdpcCodec::NBLdpcCodec(unsigned Length, unsigned NumOfChecks, unsigned Extensi
 		pCurConstraints = static_cast<GFPair *>(realloc(pCurConstraints, sizeof(GFPair) * cnt));
 		m_ppCheckConstraints[i] = pCurConstraints;
 	}
-	m_pGenMatrix = Nullspace(pCheckMatrix, Length, m_Dimension, nullptr, m_GF);
-	InitModem();
+	unsigned* pPerm = new unsigned[Length];
+	std::iota(pPerm, pPerm + Length, 0);
+	m_pGenMatrix = Nullspace(pCheckMatrix, Length, m_Dimension, pPerm, m_GF);
+	m_pMessagePositions = ComputeMessagePositions(pPerm, m_Length, m_Dimension);
+	delete[] pPerm;
 }
 
 NBLdpcCodec::NBLdpcCodec(std::string specFile): m_Type(L_OTHER)
@@ -40,9 +57,9 @@ NBLdpcCodec::NBLdpcCodec(std::string specFile): m_Type(L_OTHER)
 	m_Dimension = m_NumOfChecks;
 	m_ppCheckConstraints = new GFPair*[m_NumOfChecks];
 	GFSymbol *m_pCheckMatrix = new GFSymbol[m_Length * m_NumOfChecks]();
-	char type;
+	std::string type;
 	ifs >> type;
-	if(type == 'R')
+	if(type == "R")
 	{
 		m_Type = L_REGULAR;
 		m_pAdditionalParams = new regular_params();
@@ -63,8 +80,33 @@ NBLdpcCodec::NBLdpcCodec(std::string specFile): m_Type(L_OTHER)
 			m_ppCheckConstraints[i][NumOfRowElements].first = m_ppCheckConstraints[i][NumOfRowElements].second = 0;
 		}
 	}
+	else if(type == "SC")
+	{
+		m_Type = L_SC;
+		m_pAdditionalParams = new sc_params();
+		sc_params *pParams = reinterpret_cast<sc_params*>(m_pAdditionalParams);
+		ifs >> pParams->m_VNsPerPos >> pParams->m_CNsPerPos >> pParams->m_CouplingWidth
+			>> pParams->m_CheckDegreePerOffset >> pParams->m_ChainLength;
+		for (unsigned i = 0; i < m_NumOfChecks; ++i)
+		{
+			unsigned degree = ComputeSCCheckDegree(*pParams, i);
+			m_ppCheckConstraints[i] = new GFPair[degree + 1];
+			for (unsigned j = 0; j < degree; ++j)
+			{
+				int tmpSym;
+				ifs >> m_ppCheckConstraints[i][j].first >> tmpSym;
+				m_pCheckMatrix[i * m_Length + m_ppCheckConstraints[i][j].first]
+					= m_ppCheckConstraints[i][j].second = tmpSym;
+			}
+			m_ppCheckConstraints[i][degree].first = m_ppCheckConstraints[i][degree].second = 0;
+		}
+	}
 	ifs.close();
-	m_pGenMatrix = Nullspace(m_pCheckMatrix, m_Length, m_Dimension, nullptr, m_GF);
+	unsigned* pPerm = new unsigned[m_Length];
+	std::iota(pPerm, pPerm + m_Length, 0);
+	m_pGenMatrix = Nullspace(m_pCheckMatrix, m_Length, m_Dimension, pPerm, m_GF);
+	m_pMessagePositions = ComputeMessagePositions(pPerm, m_Length, m_Dimension);
+	delete[] pPerm;
 	for (unsigned j = 0; j < m_Dimension; ++j)
 	{
 		for (unsigned i = 0; i < m_NumOfChecks; ++i)
@@ -76,10 +118,9 @@ NBLdpcCodec::NBLdpcCodec(std::string specFile): m_Type(L_OTHER)
 				C ^= m_GF.multiply(m_pGenMatrix[j * m_Length + pCurConstraints->first], pCurConstraints->second);
 				++pCurConstraints;
 			}
-			_ASSERT(C == 0);
+			assert(C == 0);
 		}
 	}
-	InitModem();
 }
 
 bool NBLdpcCodec::VerifyCodeword(GFSymbol* pCodeword)
