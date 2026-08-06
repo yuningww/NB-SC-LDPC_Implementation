@@ -20,13 +20,17 @@ GFSymbol* Nullspace(GFSymbol*pMatrix  ///the matrix to be considered
 	}
 	Gauss(pMatrix, Dimension, Length, true, pPerm, gf);
 	unsigned NumOfChecks = Length - Dimension;
-	GFSymbol* pNullspace = new GFSymbol[NumOfChecks * Length];
-	memset(pNullspace, 0, sizeof(GFSymbol) * Length * NumOfChecks);
+	// Length/Dimension/NumOfChecks are 32-bit; their products routinely
+	// exceed 2^32 for long codewords (e.g. 300000 * 269550 = 80.9e9), so
+	// every flat-array size/index below must multiply in size_t, not
+	// unsigned, or it silently wraps and corrupts memory.
+	GFSymbol* pNullspace = new GFSymbol[(size_t)NumOfChecks * Length];
+	memset(pNullspace, 0, sizeof(GFSymbol) * (size_t)Length * NumOfChecks);
 	for (unsigned i = 0; i < NumOfChecks; i++)
 	{
-		pNullspace[i * Length + pPerm[Dimension + i]] = 1;
+		pNullspace[(size_t)i * Length + pPerm[Dimension + i]] = 1;
 		for (unsigned j = 0; j < Dimension; j++)
-			pNullspace[i * Length + pPerm[j]] = pMatrix[j * Length + pPerm[Dimension + i]];
+			pNullspace[(size_t)i * Length + pPerm[j]] = pMatrix[(size_t)j * Length + pPerm[Dimension + i]];
 	}
 	Dimension = Length - Dimension;
 	if (!pPermutation)
@@ -52,16 +56,16 @@ void Gauss(GFSymbol* pMatrix
 			unsigned C = pPermutation[c];
 			for (unsigned j = i; j < NumOfRows; j++)
 			{
-				if (pMatrix[j * NumOfColumns + C] != 0)
+				if (pMatrix[(size_t)j * NumOfColumns + C] != 0)
 				{
 					Success = true;
-					gfDeg = gf.pLogTable[pMatrix[j*NumOfColumns + C]];
+					gfDeg = gf.pLogTable[pMatrix[(size_t)j * NumOfColumns + C]];
 					for (unsigned k = 0; k < NumOfColumns; ++k)
-						pMatrix[j*NumOfColumns + k] = gf.divideConst(pMatrix[j*NumOfColumns + k], gfDeg);
+						pMatrix[(size_t)j * NumOfColumns + k] = gf.divideConst(pMatrix[(size_t)j * NumOfColumns + k], gfDeg);
 					if (j > i)
 					{
 						for (unsigned k = 0; k < NumOfColumns; ++k)
-							pMatrix[i*NumOfColumns + k] ^= pMatrix[j*NumOfColumns + k];
+							pMatrix[(size_t)i * NumOfColumns + k] ^= pMatrix[(size_t)j * NumOfColumns + k];
 					}
 					break;
 				}
@@ -84,11 +88,11 @@ void Gauss(GFSymbol* pMatrix
 		{
 			if (j == i)
 				continue;
-			if (pMatrix[j*NumOfColumns + C] != 0)
+			if (pMatrix[(size_t)j * NumOfColumns + C] != 0)
 			{
-				gfDeg = gf.pLogTable[pMatrix[j*NumOfColumns + C]];
+				gfDeg = gf.pLogTable[pMatrix[(size_t)j * NumOfColumns + C]];
 				for (unsigned k = 0; k < NumOfColumns; ++k)
-					pMatrix[j*NumOfColumns + k] ^= gf.multiplyConst(pMatrix[i*NumOfColumns + k], gfDeg);
+					pMatrix[(size_t)j * NumOfColumns + k] ^= gf.multiplyConst(pMatrix[(size_t)i * NumOfColumns + k], gfDeg);
 			}
 		}
 	}

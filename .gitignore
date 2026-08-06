@@ -21,6 +21,9 @@ x64/
 x86/
 build/
 bld/
+
+# job batch (local/server run scripts + outputs, not tracked)
+jobs/
 [Bb]in/
 [Oo]bj/
 

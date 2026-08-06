@@ -41,6 +41,7 @@ Constraints on the parameters (IMPORTANT):
 - `Length = VNsPerPos * ChainLength`, `Redundancy = CNsPerPos * (ChainLength + CouplingWidth - 1)`.
 - `VNsPerPos` must equal `CNsPerPos * CheckDegreePerOffset` Otherwise, error.
 - `CheckDegreePerOffset` should be ≥ 2. The decoder program assumes every check has degree ≥ 2. Otherwise, error.
+- Preferably, `CouplingWidth` should be far less than `ChainLength` .
 
 Properties:
 - VN degrees: constantly equals to `CouplingWidth`

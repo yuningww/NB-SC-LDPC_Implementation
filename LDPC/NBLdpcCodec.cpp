@@ -29,8 +29,8 @@ NBLdpcCodec::NBLdpcCodec(unsigned Length, unsigned NumOfChecks, unsigned Extensi
 		cnt = 0;
 		for (unsigned j = 0; j < m_Length; j++)
 		{
-			if (pCheckMatrix[i * m_Length + j])
-				pCurConstraints[cnt++] = std::make_pair(j, pCheckMatrix[i * m_Length + j]);
+			if (pCheckMatrix[(size_t)i * m_Length + j])
+				pCurConstraints[cnt++] = std::make_pair(j, pCheckMatrix[(size_t)i * m_Length + j]);
 		}
 		pCurConstraints[cnt++] = std::make_pair(0, 0);
 		pCurConstraints = static_cast<GFPair *>(realloc(pCurConstraints, sizeof(GFPair) * cnt));
@@ -56,7 +56,11 @@ NBLdpcCodec::NBLdpcCodec(std::string specFile): m_Type(L_OTHER)
 	m_GF.Init(Extension);
 	m_Dimension = m_NumOfChecks;
 	m_ppCheckConstraints = new GFPair*[m_NumOfChecks];
-	GFSymbol *m_pCheckMatrix = new GFSymbol[m_Length * m_NumOfChecks]();
+	// m_Length/m_NumOfChecks are 32-bit; their product overflows a 32-bit
+	// unsigned for long codewords (e.g. 300000 * 30450 = 9.1e9), so this
+	// must multiply in size_t or the allocation silently undersizes and
+	// every index below it corrupts memory past the end of the buffer.
+	GFSymbol *m_pCheckMatrix = new GFSymbol[(size_t)m_Length * m_NumOfChecks]();
 	std::string type;
 	ifs >> type;
 	if(type == "R")
@@ -74,7 +78,7 @@ NBLdpcCodec::NBLdpcCodec(std::string specFile): m_Type(L_OTHER)
 			{
 				int tmpSym;
 				ifs >> m_ppCheckConstraints[i][j].first >> tmpSym;
-				m_pCheckMatrix[i * m_Length + m_ppCheckConstraints[i][j].first]
+				m_pCheckMatrix[(size_t)i * m_Length + m_ppCheckConstraints[i][j].first]
 					= m_ppCheckConstraints[i][j].second = tmpSym;
 			}
 			m_ppCheckConstraints[i][NumOfRowElements].first = m_ppCheckConstraints[i][NumOfRowElements].second = 0;
@@ -95,7 +99,7 @@ NBLdpcCodec::NBLdpcCodec(std::string specFile): m_Type(L_OTHER)
 			{
 				int tmpSym;
 				ifs >> m_ppCheckConstraints[i][j].first >> tmpSym;
-				m_pCheckMatrix[i * m_Length + m_ppCheckConstraints[i][j].first]
+				m_pCheckMatrix[(size_t)i * m_Length + m_ppCheckConstraints[i][j].first]
 					= m_ppCheckConstraints[i][j].second = tmpSym;
 			}
 			m_ppCheckConstraints[i][degree].first = m_ppCheckConstraints[i][degree].second = 0;
@@ -115,7 +119,7 @@ NBLdpcCodec::NBLdpcCodec(std::string specFile): m_Type(L_OTHER)
 			GFPair *pCurConstraints = m_ppCheckConstraints[i];
 			while (pCurConstraints->second)
 			{
-				C ^= m_GF.multiply(m_pGenMatrix[j * m_Length + pCurConstraints->first], pCurConstraints->second);
+				C ^= m_GF.multiply(m_pGenMatrix[(size_t)j * m_Length + pCurConstraints->first], pCurConstraints->second);
 				++pCurConstraints;
 			}
 			assert(C == 0);
